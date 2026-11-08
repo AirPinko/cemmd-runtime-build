@@ -1,0 +1,83 @@
+name: Verify anonymous published SIF pull
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-published-sif.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      IMAGE: ghcr.io/airpinko/cemmd-runtime-build:1.0.0-sif
+      EXPECTED_DIGEST: ghcr.io/airpinko/cemmd-runtime-build@sha256:290845f63d7bf906c469eae22ffa50b4794adf95754a2646bea44f9d62ba822a
+      EXPECTED_SIF_SHA: bac04f0a46c47b859a2ff44820ea94b2f3ab69c741f7f0579baf8bdb68777bca
+    steps:
+      # No application checkout, no registry login, no package push, no scientific run.
+      - name: Pull the exact platform address with an empty Docker credential directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pull-proof extracted-sif
+          export DOCKER_CONFIG="$(mktemp -d)"
+          printf '%s\n' "$IMAGE" > pull-proof/image-address.txt
+          printf 'Registry login: none; fresh empty DOCKER_CONFIG\n' > pull-proof/auth-mode.txt
+          docker pull --platform linux/amd64 "$IMAGE" 2>&1 | tee pull-proof/anonymous-pull.log
+          actual_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")"
+          test "$actual_digest" = "$EXPECTED_DIGEST"
+          printf '%s\n' "$actual_digest" > pull-proof/pulled-image-digest.txt
+          docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE" > pull-proof/platform.txt
+          test "$(cat pull-proof/platform.txt)" = 'linux/amd64'
+          container_id="$(docker create "$IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/sif/." extracted-sif/
+          find extracted-sif -maxdepth 1 -type f -printf '%f %s bytes\n' > pull-proof/extracted-files.txt
+          test "$(find extracted-sif -maxdepth 1 -type f -name '*.sif' | wc -l)" -eq 1
+          printf '%s  %s\n' "$EXPECTED_SIF_SHA" extracted-sif/cemmd-science_1.0.0.sif | sha256sum --check | tee pull-proof/sif-checksum-check.txt
+          sha256sum extracted-sif/cemmd-science_1.0.0.sif > pull-proof/extracted-sif-sha256.txt
+      - name: Install the official Apptainer package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt-get update
+          sudo apt-get install -y apptainer
+          apptainer version > pull-proof/apptainer-version.txt
+      - name: Verify dependencies inside the remotely pulled SIF
+        shell: bash
+        run: |
+          set -euo pipefail
+          apptainer sif list extracted-sif/cemmd-science_1.0.0.sif > pull-proof/sif-partitions.txt
+          cat > pull-proof/check_dependencies.py <<'PY'
+          import importlib.metadata as metadata
+          import importlib.util
+          import json
+          import platform
+          import shutil
+          import numpy, scipy, matplotlib, PIL, adam_community
+          assert platform.machine() == 'x86_64'
+          assert importlib.util.find_spec('lammps')
+          assert importlib.util.find_spec('packmol')
+          assert shutil.which('lmp')
+          print(json.dumps({'python': platform.python_version(), 'architecture': platform.machine(),
+              'dependencies': {n: metadata.version(n) for n in ('adam-community', 'numpy', 'scipy', 'matplotlib', 'Pillow', 'packmol', 'lammps')},
+              'scientific_execution_performed': False}, indent=2))
+          PY
+          sudo apptainer exec --cleanenv --containall --net --network none \
+            --bind "$PWD/pull-proof:/proof:ro" \
+            extracted-sif/cemmd-science_1.0.0.sif \
+            python /proof/check_dependencies.py > pull-proof/dependency-verification.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anonymous-published-sif-proof
+          path: pull-proof/
+          retention-days: 14
+          if-no-files-found: warn
+
