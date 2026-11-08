@@ -24,18 +24,16 @@ jobs:
       OUTPUT_IMAGE: ghcr.io/airpinko/cemmd-runtime-build:1.0.0-sif
     steps:
       # No repository checkout: the public wrapper contains dependency files only.
-      - name: Install checksum-verified official Apptainer
+      - name: Install Apptainer from its official signed Ubuntu repository
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 \
-            https://github.com/apptainer/apptainer/releases/download/v1.5.5/apptainer_1.5.5_amd64.deb \
-            --output apptainer.deb
-          printf '%s  apptainer.deb\n' 25095d3711504b3e8657dbb2e172ef8db9db43c4503d940c9c36b105db8dce77 | sha256sum --check
+          sudo add-apt-repository -y ppa:apptainer/ppa
           sudo apt-get update
-          sudo apt-get install -y ./apptainer.deb
+          sudo apt-get install -y apptainer
           mkdir -p sif-context sif-proof
           apptainer version > sif-proof/apptainer-version.txt
+          dpkg-query -W apptainer > sif-proof/apptainer-package.txt
       - name: Convert the immutable dependency image to SIF
         shell: bash
         run: |
@@ -90,7 +88,7 @@ jobs:
           docker run --rm --network none "$OUTPUT_IMAGE" \
             sha256sum /sif/cemmd-science_1.0.0.sif > sif-proof/wrapped-sif-sha256.txt
           test "$(cut -d ' ' -f 1 sif-proof/sif-sha256.txt)" = "$(cut -d ' ' -f 1 sif-proof/wrapped-sif-sha256.txt)"
-      - name: Push the separate SIF tag to the existing public dependency package
+      - name: Push the dependency-only SIF transport package
         shell: bash
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}

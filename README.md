@@ -4,7 +4,7 @@ This repository contains only a workflow and documentation for converting the pu
 
 The source image is pinned to `ghcr.io/airpinko/cemmd-science-runtime@sha256:a145bd2fa7dadab62e96962a2821301f585cf6279e0f56dcd4487a122f785f4b`. The workflow does not check out the application repository.
 
-The workflow uses a standard Ubuntu GitHub-hosted runner. It verifies the official Apptainer installer checksum, converts the immutable image with gzip compression, checks Python dependencies in an isolated network-disabled container, and verifies the SIF hash inside the transport image.
+The workflow uses a standard Ubuntu GitHub-hosted runner. It installs Apptainer from the project's official signed Ubuntu repository and records the installed version, converts the immutable image with gzip compression, checks Python dependencies in an isolated network-disabled container, and verifies the SIF hash inside the transport image.
 
 The transport image is `ghcr.io/airpinko/cemmd-runtime-build:1.0.0-sif`. Its `/sif/cemmd-science_1.0.0.sif` layout follows the [official AsterFire image guide](https://sidereus-ai.feishu.cn/wiki/BZcYwmIb3imqqQkpU7kcKMhynbh).
 
